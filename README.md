@@ -16,5 +16,6 @@ npx hardhat test
 ### Learnings so far
 
 * Vyper feels safer than Solidity (by design!) but lack of inheritance is annoying, esp with common things like ERC20 implementations
+  * As an example, Vyper version implements token transferring explicitly, whilst for Solidity I just used OpenZeppelin's + mint()
 * Hardhat is awesome, if only it was easy to integrate into IDE for simpler debugging (need to find if someone did this)
 * Its surprising how simple Uni V1 code actually is, expected it to be far more complicated. Hadn't realised that UNI token was essentially what is now the LP token.
