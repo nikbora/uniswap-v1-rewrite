@@ -32,10 +32,8 @@ describe('UniV1InSol', function () {
 
         return {token, pool};
     }
-
     it('Basic token and pool checks', async function () {
         const {token, pool} = await loadFixture(fixture);
-
         expect(await pool.token()).to.equal(token.address);
     });
     it('Can add/remove liquidity', async function () {
@@ -187,15 +185,18 @@ describe('UniV1InSol', function () {
         await expect(pool.connect(addr1).ethToTokenSwapInput(NIK_TOKEN_PURCHASED, 1, {value: ETH_SOLD}))
             .to.be.revertedWith('\'Deadline passed');
 
-
-        //TODO FROM HERE
         // # BUYER converts ETH to UNI
         // HAY_exchange.ethToTokenSwapInput(MIN_HAY_BOUGHT, DEADLINE, transact={'value': ETH_SOLD, 'from': a1})
+        await pool.connect(addr1).ethToTokenSwapInput(MIN_NIK_TOKEN_BOUGHT,  DEADLINE, {value: ETH_SOLD});
         // # Updated balances of UNI exchange
         // assert w3.eth.getBalance(HAY_exchange.address) == ETH_RESERVE + ETH_SOLD
+        expect(await ethers.provider.getBalance(pool.address)).to.equal(ETH_RESERVE.add(ETH_SOLD));
         // assert HAY_token.balanceOf(HAY_exchange.address) == HAY_RESERVE - HAY_PURCHASED
+        expect(await token.balanceOf(pool.address)).to.equal(NIK_TOKEN_RESERVE.sub(NIK_TOKEN_PURCHASED));
         // # Updated balances of BUYER
         // assert HAY_token.balanceOf(a1) == HAY_PURCHASED
+        expect(await token.balanceOf(addr1.address)).to.equal(ethers.utils.parseUnits('13', 'ether').sub(1).add(NIK_TOKEN_PURCHASED));
         // assert w3.eth.getBalance(a1) == INITIAL_ETH - ETH_SOLD
+        expect(await ethers.provider.getBalance(addr1.address)).to.equal(BigNumber.from("9997996054176000000000"));
     });
 });
