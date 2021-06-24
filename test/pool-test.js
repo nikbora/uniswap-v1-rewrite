@@ -1,24 +1,23 @@
+const {BigNumber} = require('ethers');
+const {loadFixture} = require('ethereum-waffle');
 const {expect} = require('chai');
 
+const ETH_RESERVE = ethers.utils.parseUnits('5', 'ether');
+const NIK_TOKEN_RESERVE = ethers.utils.parseUnits('10', 'ether');
+const DEADLINE = 1742680400;
+
+const MIN_NIK_TOKEN_BOUGHT = BigNumber.from('1');
+const ETH_SOLD = ethers.utils.parseUnits('1', 'ether');
+
+function swapInput(inputAmount, inputReserve, outputReserve) {
+    inputAmountWithFee = inputAmount.mul(997);
+    numerator = inputAmountWithFee.mul(outputReserve);
+    denominator = inputReserve.mul(1000).add(inputAmountWithFee);
+    return numerator.div(denominator);
+}
+
 describe('UniV1InSol', function () {
-    it('Basic token and pool checks', async function () {
-        const NikToken = await ethers.getContractFactory('NikToken');
-        const token = await NikToken.deploy(ethers.utils.parseUnits('100000', 'ether'));
-        await token.deployed();
-
-        const UniswapV1 = await ethers.getContractFactory('UniswapV1');
-        const exchange = await UniswapV1.deploy(token.address);
-        await exchange.deployed();
-
-        expect(await exchange.token()).to.equal(token.address);
-    });
-    it('Can add/remove liquidity', async function () {
-        const ETH_RESERVE = ethers.utils.parseUnits('5', 'ether');
-        const NIK_TOKEN_RESERVE = ethers.utils.parseUnits('10', 'ether');
-        const DEADLINE = 1742680400;
-
-        const [owner, addr1, addr2, addr3] = await ethers.getSigners();
-
+    async function fixture([wallet, other], provider) {
         const NikToken = await ethers.getContractFactory('NikToken');
         const token = await NikToken.deploy(ethers.utils.parseUnits('100000', 'ether'));
         await token.deployed();
@@ -29,7 +28,19 @@ describe('UniV1InSol', function () {
 
         // Add initial liquitidy
         await token.approve(pool.address, NIK_TOKEN_RESERVE);
-        expect(pool.addLiquidity(0, NIK_TOKEN_RESERVE, DEADLINE, {value: ETH_RESERVE})).to.emit(pool, 'Transfer');
+        await pool.addLiquidity(0, NIK_TOKEN_RESERVE, DEADLINE, {value: ETH_RESERVE});
+
+        return {token, pool};
+    }
+
+    it('Basic token and pool checks', async function () {
+        const {token, pool} = await loadFixture(fixture);
+
+        expect(await pool.token()).to.equal(token.address);
+    });
+    it('Can add/remove liquidity', async function () {
+        const [owner, addr1, addr2] = await ethers.getSigners();
+        const {token, pool} = await loadFixture(fixture);
 
         // HAY_token.transfer(a1, 15*10**18, transact={})
         await token.transfer(addr1.address, ethers.utils.parseUnits('15', 'ether'));
@@ -151,5 +162,40 @@ describe('UniV1InSol', function () {
         await token.approve(pool.address, ethers.utils.parseUnits('100', 'ether'));
         // HAY_exchange.addLiquidity(0, HAY_RESERVE, DEADLINE, transact={'value': ETH_RESERVE})
         expect(pool.addLiquidity(0, NIK_TOKEN_RESERVE, DEADLINE, {value: ETH_RESERVE})).to.emit(pool, 'Transfer');
+    });
+    it('Can swap input', async function () {
+        const [owner, addr1, addr2] = await ethers.getSigners();
+        const {token, pool} = await loadFixture(fixture);
+
+        const NIK_TOKEN_PURCHASED = swapInput(ETH_SOLD, ETH_RESERVE, NIK_TOKEN_RESERVE);
+        // assert HAY_exchange.getEthToTokenInputPrice(ETH_SOLD) == HAY_PURCHASED
+        expect(await pool.getEthToTokenInputPrice(ETH_SOLD)).to.equal(NIK_TOKEN_PURCHASED);
+        // # eth sold == 0
+        // assert_fail(lambda: HAY_exchange.ethToTokenSwapInput(MIN_HAY_BOUGHT, DEADLINE, transact={'value': 0, 'from': a1}))
+        await expect(pool.connect(addr1).ethToTokenSwapInput(MIN_NIK_TOKEN_BOUGHT, DEADLINE, {value: BigNumber.from(0)}))
+            .to.be.revertedWith('Must send eth');
+        // # min tokens == 0
+        // assert_fail(lambda: HAY_exchange.ethToTokenSwapInput(0, DEADLINE, transact={'value': ETH_SOLD, 'from': a1}))
+        await expect(pool.connect(addr1).ethToTokenSwapInput(0, DEADLINE, {value: ETH_SOLD}))
+            .to.be.revertedWith('Must specify minTokens');
+        // # min tokens > tokens purchased
+        // assert_fail(lambda: HAY_exchange.ethToTokenSwapInput(HAY_PURCHASED + 1, DEADLINE, transact={'value': ETH_SOLD, 'from': a1}))
+        await expect(pool.connect(addr1).ethToTokenSwapInput(NIK_TOKEN_PURCHASED.add(1), DEADLINE, {value: ETH_SOLD}))
+            .to.be.revertedWith('Bought less than minTokens');
+        // # deadline < block.timestamp
+        // assert_fail(lambda: HAY_exchange.ethToTokenSwapInput(MIN_HAY_BOUGHT, 1, transact={'value': ETH_SOLD, 'from': a1}))
+        await expect(pool.connect(addr1).ethToTokenSwapInput(NIK_TOKEN_PURCHASED, 1, {value: ETH_SOLD}))
+            .to.be.revertedWith('\'Deadline passed');
+
+
+        //TODO FROM HERE
+        // # BUYER converts ETH to UNI
+        // HAY_exchange.ethToTokenSwapInput(MIN_HAY_BOUGHT, DEADLINE, transact={'value': ETH_SOLD, 'from': a1})
+        // # Updated balances of UNI exchange
+        // assert w3.eth.getBalance(HAY_exchange.address) == ETH_RESERVE + ETH_SOLD
+        // assert HAY_token.balanceOf(HAY_exchange.address) == HAY_RESERVE - HAY_PURCHASED
+        // # Updated balances of BUYER
+        // assert HAY_token.balanceOf(a1) == HAY_PURCHASED
+        // assert w3.eth.getBalance(a1) == INITIAL_ETH - ETH_SOLD
     });
 });

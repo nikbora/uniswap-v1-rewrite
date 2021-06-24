@@ -9,6 +9,7 @@ contract UniswapV1 is ERC20 {
 
     event AddLiquidity(address indexed provider, uint256 ethAmount, uint256 tokenAmount);
     event RemoveLiquidity(address indexed provider, uint256 ethAmount, uint256 tokenAmount);
+    event TokenPurchase(address indexed buyer, uint256 ethSold, uint256 tokenBought);
 
     address public token; // address of the ERC20 token traded on this contract
 
@@ -110,6 +111,66 @@ contract UniswapV1 is ERC20 {
         // log.Transfer(msg.sender, ZERO_ADDRESS, amount)
         emit Transfer(msg.sender, address(0), _amount);
         return (ethAmount, tokenAmount);
+    }
+
+
+    // @dev Pricing function for converting between ETH and Tokens.
+    // @param input_amount Amount of ETH or Tokens being sold.
+    // @param input_reserve Amount of ETH or Tokens (input type) in exchange reserves.
+    // @param output_reserve Amount of ETH or Tokens (output type) in exchange reserves.
+    // @return Amount of ETH or Tokens bought.
+    function _getInputPrice(uint256 _inputAmount, uint256 _inputReserve, uint256 _outputReserve) internal pure returns (uint256) {
+        //    assert input_reserve > 0 and output_reserve > 0
+        require(_inputReserve > 0, "Input amount must be > 0");
+        require(_outputReserve > 0, "Input amount must be > 0");
+        //    input_amount_with_fee: uint256 = input_amount * 997
+        uint256 inputAmountWithFee = _inputAmount * 997;
+        //    numerator: uint256 = input_amount_with_fee * output_reserve
+        //    denominator: uint256 = (input_reserve * 1000) + input_amount_with_fee
+        uint256 numerator = inputAmountWithFee * _outputReserve;
+        uint256 denominator = (_inputReserve * 1000) + inputAmountWithFee;
+
+        return numerator / denominator;
+    }
+
+    // @notice Public price function for ETH to Token trades with an exact input.
+    // @param eth_sold Amount of ETH sold.
+    // @return Amount of Tokens that can be bought with input ETH.
+    function getEthToTokenInputPrice(uint256 _ethSold) public view returns (uint256) {
+        //    assert eth_sold > 0
+        require(_ethSold > 0, "Must sell non-zero amount");
+        //    token_reserve: uint256 = self.token.balanceOf(self)
+        uint256 tokenReserve = IERC20(token).balanceOf(address(this));
+        //    return self.getInputPrice(as_unitless_number(eth_sold), as_unitless_number(self.balance), token_reserve)
+        return _getInputPrice(_ethSold, address(this).balance, tokenReserve);
+    }
+
+
+    function _ethToTokenInput(uint256 _ethSold, uint256 _minTokens, uint256 _deadline, address _buyer, address _recipient) internal returns (uint256) {
+        //    assert deadline >= block.timestamp and (eth_sold > 0 and min_tokens > 0)
+        require(_deadline >= block.timestamp, "Deadline passed");
+        require(_ethSold > 0, "Must send eth");
+        require(_minTokens > 0, "Must specify minTokens");
+        //    token_reserve: uint256 = self.token.balanceOf(self)
+        uint256 tokenReserve = IERC20(token).balanceOf(address(this));
+        //    tokens_bought: uint256 = self.getInputPrice(as_unitless_number(eth_sold), as_unitless_number(self.balance - eth_sold), token_reserve)
+        uint256 tokensBought = _getInputPrice(_ethSold, address(this).balance - _ethSold, tokenReserve);
+        //    assert tokens_bought >= min_tokens
+        require(tokensBought >= _minTokens, "Bought less than minTokens");
+        //    assert self.token.transfer(recipient, tokens_bought)
+        require(IERC20(token).transfer(_recipient, tokensBought));
+        //    log.TokenPurchase(buyer, eth_sold, tokens_bought)
+        emit TokenPurchase(_buyer, _ethSold, tokensBought);
+        return tokensBought;
+    }
+
+    // @notice Convert ETH to Tokens.
+    // @dev User specifies exact input (msg.value) and minimum output.
+    // @param min_tokens Minimum Tokens bought.
+    // @param deadline Time after which this transaction can no longer be executed.
+    // @return Amount of Tokens bought.
+    function ethToTokenSwapInput(uint256 _minTokens, uint256 _deadline) public payable returns (uint256) {
+        return _ethToTokenInput(msg.value, _minTokens, _deadline, msg.sender, msg.sender);
     }
 
 }
